@@ -9,7 +9,7 @@
 
         @if ($codeSent)
             <p class="form-success mb-2" role="status">
-                If an active account uses that email, a 6-digit code has been sent. Enter it below. The code expires in {{ (int) config('booking.password_reset_code_minutes', 10) }} minutes.
+                If an active account uses that email, a 6-digit code has been sent. Enter it below. The code expires in {{ (int) config('booking.reset_code_expiry_minutes', 10) }} minutes.
             </p>
         @endif
 

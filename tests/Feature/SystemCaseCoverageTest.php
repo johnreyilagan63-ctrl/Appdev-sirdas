@@ -125,20 +125,24 @@ class SystemCaseCoverageTest extends TestCase
         $reset = PasswordReset::create([
             'user_id' => $user->id,
             'token_hash' => password_hash('654321', PASSWORD_DEFAULT),
+            'purpose' => 'code',
             'expires_at' => now()->addHour(),
             'used' => false,
             'attempts' => 0,
         ]);
 
         for ($attempt = 0; $attempt < 5; $attempt++) {
-            $response = $this->post('/reset-password', [
+            $response = $this->post('/forgot-password/verify', [
                 'email' => $user->email,
                 'code' => '000000',
             ]);
         }
 
-        $response->assertOk()->assertSee('Too many attempts. Start again with a new reset code.');
-        $response->assertDontSee('New Password');
+        $page = $this->get('/forgot-password');
+        $page->assertOk()
+            ->assertSee('Too many incorrect codes. Request a new code.')
+            ->assertDontSee('New Password');
+        $response->assertRedirect('/forgot-password');
         $this->assertDatabaseHas('password_resets', [
             'id' => $reset->id,
             'attempts' => 5,
@@ -152,21 +156,30 @@ class SystemCaseCoverageTest extends TestCase
         PasswordReset::create([
             'user_id' => $user->id,
             'token_hash' => password_hash('654321', PASSWORD_DEFAULT),
+            'purpose' => 'code',
             'expires_at' => now()->addHour(),
             'used' => false,
             'attempts' => 0,
         ]);
 
-        $this->post('/reset-password', [
+        $response = $this->post('/forgot-password/verify', [
             'email' => $user->email,
             'code' => '654321',
-        ])->assertRedirect('/reset-password');
+        ])->assertRedirect();
+        $location = (string) $response->headers->get('Location');
+        parse_str((string) parse_url($location, PHP_URL_QUERY), $query);
+        $token = (string) ($query['token'] ?? '');
+        $this->assertNotSame('', $token);
 
         $this->post('/reset-password', [
+            'token' => $token,
             'password' => 'NewPass@123',
             'confirm_password' => 'NewPass@123',
         ])->assertRedirect('/login');
 
+        $this->get($location)
+            ->assertOk()
+            ->assertSee('This reset request is invalid or has expired.');
         $this->assertTrue(password_verify('NewPass@123', (string) $user->fresh()->password_hash));
         $this->assertStringStartsWith('$2y$', (string) $user->fresh()->password_hash);
         $this->assertDatabaseHas('password_resets', [
@@ -334,9 +347,10 @@ class SystemCaseCoverageTest extends TestCase
 
     public function test_unknown_password_reset_email_uses_a_generic_response(): void
     {
-        $this->post('/forgot-password', ['email' => 'nobody@example.test'])
+        $this->followingRedirects()
+            ->post('/forgot-password', ['email' => 'nobody@example.test'])
             ->assertOk()
-            ->assertSee('If an active account uses that email, a reset code will be sent.')
+            ->assertSee('If an active account uses that email, a 6-digit code has been sent.')
             ->assertDontSee('Email address not found');
 
         $this->assertDatabaseCount('password_resets', 0);
