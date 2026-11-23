@@ -8,7 +8,7 @@ class PasswordReset extends Model
 {
     public $timestamps = false;
 
-    protected $fillable = ['user_id', 'token_hash', 'expires_at', 'used', 'attempts', 'verified_at'];
+    protected $fillable = ['user_id', 'token_hash', 'purpose', 'expires_at', 'used', 'attempts', 'verified_at'];
 
     protected function casts(): array
     {

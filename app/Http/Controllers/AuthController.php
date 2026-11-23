@@ -203,10 +203,18 @@ class AuthController extends Controller
             return redirect(home_for_role(Auth::user()->role));
         }
 
+        $errors = [];
+        $codeError = $request->session()->pull('forgot_code_error');
+
+        if ($codeError) {
+            $errors['code'] = $codeError;
+        }
+
         return view('auth.forgot-password', [
-            'errors' => [],
-            'done' => false,
-            'email' => '',
+            'errors' => $errors,
+            'codeSent' => (bool) $request->session()->get('forgot_code_sent', false),
+            'email' => (string) $request->session()->get('forgot_email', ''),
+            'code' => (string) $request->session()->pull('forgot_code_value', ''),
             'pageTitle' => 'Forgot Password',
             'minimalHeader' => true,
         ]);
@@ -218,54 +226,169 @@ class AuthController extends Controller
             return redirect(home_for_role(Auth::user()->role));
         }
 
-        $errors = [];
-        $done = false;
         $email = strtolower(trim((string) $request->input('email', '')));
+        $errors = [];
+
+        if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors['email'] = 'Enter a valid email address.';
+
+            return $this->forgotView($email, '', $errors, (bool) $request->session()->get('forgot_code_sent', false));
+        }
+
+        $user = User::where('email', $email)->where('status', 'active')->first();
+
+        if ($user) {
+            $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $minutes = max(1, (int) config('booking.reset_code_expiry_minutes', 10));
+
+            PasswordReset::where('user_id', $user->id)->where('used', false)->update(['used' => true]);
+
+            $reset = PasswordReset::create([
+                'user_id' => $user->id,
+                'token_hash' => password_hash($code, PASSWORD_DEFAULT),
+                'purpose' => 'code',
+                'expires_at' => now()->addMinutes($minutes),
+                'used' => false,
+                'attempts' => 0,
+                'verified_at' => null,
+            ]);
+
+            $body = 'Hello ' . $user->first_name . ",\n\n"
+                . "Your OliyetteBook password reset code is:\n\n"
+                . $code . "\n\n"
+                . 'Enter this code on the Forgot Password page within ' . $minutes . " minutes. Do not share this code.\n\n"
+                . "If you did not request this, you can ignore this email.\n\n"
+                . 'OliyetteBook';
+
+            if (! send_mail($user->email, 'Your OliyetteBook password reset code', $body)) {
+                $reset->update(['used' => true]);
+            }
+        }
+
+        $request->session()->put('forgot_email', $email);
+        $request->session()->put('forgot_code_sent', true);
+        $request->session()->forget(['forgot_code_error', 'forgot_code_value']);
+
+        return redirect()->route('password.request');
+    }
+
+    public function verifyResetCode(Request $request)
+    {
+        if (Auth::check()) {
+            return redirect(home_for_role(Auth::user()->role));
+        }
+
+        $email = strtolower(trim((string) $request->input('email', '')));
+        $code = preg_replace('/\D+/', '', (string) $request->input('code', '')) ?? '';
+        $errors = [];
 
         if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = 'Enter a valid email address.';
         }
+        if (strlen($code) !== 6) {
+            $errors['code'] = 'Enter the 6-digit code from your email.';
+        }
 
-        if (! $errors) {
-            $user = User::where('email', $email)->where('status', 'active')->first();
+        if ($errors) {
+            return $this->forgotView($email, $code, $errors, true);
+        }
 
-            if ($user) {
-                $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $maxAttempts = max(1, (int) config('booking.reset_code_max_attempts', 5));
+        $tokenMinutes = max(1, (int) config('booking.password_reset_token_minutes', 15));
 
+        try {
+            $result = DB::transaction(function () use ($email, $code, $maxAttempts, $tokenMinutes) {
+                $user = User::where('email', $email)->where('status', 'active')->first();
+
+                if (! $user) {
+                    return ['state' => 'invalid'];
+                }
+
+                $reset = PasswordReset::where('user_id', $user->id)
+                    ->where('purpose', 'code')
+                    ->where('used', false)
+                    ->orderByDesc('id')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $reset || $reset->expires_at->isPast()) {
+                    return ['state' => 'invalid'];
+                }
+
+                if ((int) $reset->attempts >= $maxAttempts) {
+                    $reset->update(['used' => true]);
+
+                    return ['state' => 'locked'];
+                }
+
+                if (! password_verify($code, (string) $reset->token_hash)) {
+                    $attempts = (int) $reset->attempts + 1;
+                    $reset->update([
+                        'attempts' => $attempts,
+                        'used' => $attempts >= $maxAttempts,
+                    ]);
+
+                    return ['state' => $attempts >= $maxAttempts ? 'locked' : 'incorrect'];
+                }
+
+                $token = bin2hex(random_bytes(32));
+
+                $reset->update(['used' => true]);
                 PasswordReset::where('user_id', $user->id)->where('used', false)->update(['used' => true]);
 
-                $reset = PasswordReset::create([
+                PasswordReset::create([
                     'user_id' => $user->id,
-                    'token_hash' => password_hash($code, PASSWORD_DEFAULT),
-                    'expires_at' => now()->addMinutes((int) config('booking.reset_code_expiry_minutes')),
+                    'token_hash' => hash('sha256', $token),
+                    'purpose' => 'token',
+                    'expires_at' => now()->addMinutes($tokenMinutes),
+                    'used' => false,
                     'attempts' => 0,
                     'verified_at' => null,
                 ]);
 
-                $body = "Hello " . $user->first_name . ",\n\n"
-                    . "We received a request to reset your OliyetteBook password.\n"
-                    . "Enter this reset code within "
-                    . (int) config('booking.reset_code_expiry_minutes')
-                    . " minutes:\n\n"
-                    . $code . "\n\n"
-                    . "If you did not request this, you can ignore this email.\n\n"
-                    . "— OliyetteBook";
+                return ['state' => 'verified', 'token' => $token];
+            });
+        } catch (\Throwable $e) {
+            report($e);
 
-                if (! send_mail($user->email, 'Reset your OliyetteBook password', $body)) {
-                    $reset->update(['used' => true]);
-                }
-            }
-
-            $done = true;
+            return $this->failedCode($request, $email, $code, 'We could not verify that code. Please try again.');
         }
 
+        if ($result['state'] !== 'verified') {
+            $message = match ($result['state']) {
+                'locked' => 'Too many incorrect codes. Request a new code.',
+                'incorrect' => 'That code is incorrect. Please try again.',
+                default => 'That code is incorrect or has expired. Request a new code.',
+            };
+
+            return $this->failedCode($request, $email, $code, $message);
+        }
+
+        $request->session()->forget(['forgot_email', 'forgot_code_sent', 'forgot_code_error', 'forgot_code_value']);
+
+        return redirect()->route('password.reset', ['token' => $result['token']]);
+    }
+
+    private function forgotView(string $email, string $code, array $errors, bool $codeSent)
+    {
         return view('auth.forgot-password', [
             'errors' => $errors,
-            'done' => $done,
+            'codeSent' => $codeSent,
             'email' => $email,
+            'code' => $code,
             'pageTitle' => 'Forgot Password',
             'minimalHeader' => true,
         ]);
+    }
+
+    private function failedCode(Request $request, string $email, string $code, string $message)
+    {
+        $request->session()->put('forgot_email', $email);
+        $request->session()->put('forgot_code_sent', true);
+        $request->session()->flash('forgot_code_error', $message);
+        $request->session()->flash('forgot_code_value', $code);
+
+        return redirect()->route('password.request');
     }
 
     public function showReset(Request $request)
@@ -274,26 +397,28 @@ class AuthController extends Controller
             return redirect(home_for_role(Auth::user()->role));
         }
 
+        $token = (string) ($request->input('token', $request->query('token', '')));
+        $token = preg_replace('/[^a-f0-9]/i', '', $token) ?? '';
         $errors = [];
-        $showPasswordForm = false;
-        $email = strtolower(trim((string) $request->input('email', '')));
-        $resetId = (int) $request->session()->get('password_reset_id', 0);
-        $reset = $resetId > 0
-            ? PasswordReset::where('id', $resetId)
-                ->where('used', false)
-                ->whereNotNull('verified_at')
-                ->where('expires_at', '>', now())
-                ->first()
-            : null;
+        $reset = null;
+        $invalid = false;
 
-        if ($reset) {
-            $showPasswordForm = true;
-        } elseif ($resetId > 0) {
-            $request->session()->forget('password_reset_id');
-            $errors['form'] = 'This reset code is invalid or has expired. Request a new code.';
+        if ($token === '') {
+            $invalid = true;
+        } else {
+            $reset = PasswordReset::where('token_hash', hash('sha256', $token))
+                ->where('purpose', 'token')
+                ->where('used', false)
+                ->where('expires_at', '>', now())
+                ->orderByDesc('id')
+                ->first();
+
+            if (! $reset) {
+                $invalid = true;
+            }
         }
 
-        if ($request->isMethod('post') && $showPasswordForm) {
+        if (! $invalid && $request->isMethod('post')) {
             $password = (string) $request->input('password', '');
             $confirm = (string) $request->input('confirm_password', '');
 
@@ -304,100 +429,29 @@ class AuthController extends Controller
                 $errors['confirm_password'] = 'The passwords do not match.';
             }
 
-            if (! $errors) {
+            if (! $errors && $reset) {
                 try {
-                    DB::transaction(function () use ($password, $resetId) {
-                        $verifiedReset = PasswordReset::where('id', $resetId)
-                            ->where('used', false)
-                            ->whereNotNull('verified_at')
-                            ->lockForUpdate()
-                            ->first();
-
-                        if (! $verifiedReset || $verifiedReset->expires_at->isPast()) {
-                            throw new \RuntimeException('The verified reset code has expired.');
-                        }
-
-                        User::where('id', $verifiedReset->user_id)->update([
+                    DB::transaction(function () use ($password, $reset) {
+                        User::where('id', $reset->user_id)->update([
                             'password_hash' => password_hash($password, PASSWORD_DEFAULT),
                         ]);
-                        PasswordReset::where('user_id', $verifiedReset->user_id)->update(['used' => true]);
+
+                        PasswordReset::where('user_id', $reset->user_id)->update(['used' => true]);
                     });
 
-                    $request->session()->forget('password_reset_id');
-                    flash('success', 'Password updated successfully.');
+                    flash('success', 'Your password has been updated. Please log in with the new password.');
 
                     return redirect()->route('login');
                 } catch (\Throwable $e) {
-                    report($e);
-                    $errors['form'] = 'We could not update your password. Request a new code and try again.';
-                    $request->session()->forget('password_reset_id');
-                    $showPasswordForm = false;
+                    $errors['form'] = 'We could not update your password. Please try again.';
                 }
-            }
-        } elseif ($request->isMethod('post')) {
-            $email = strtolower(trim((string) $request->input('email', '')));
-            $code = trim((string) $request->input('code', ''));
-
-            if (! filter_var($email, FILTER_VALIDATE_EMAIL) || ! preg_match('/^\d{6}$/', $code)) {
-                $errors['form'] = 'Invalid or expired reset code.';
-            } else {
-                $result = DB::transaction(function () use ($email, $code) {
-                    $user = User::where('email', $email)->where('status', 'active')->first();
-
-                    if (! $user) {
-                        return ['state' => 'invalid'];
-                    }
-
-                    $reset = PasswordReset::where('user_id', $user->id)
-                        ->where('used', false)
-                        ->orderByDesc('id')
-                        ->lockForUpdate()
-                        ->first();
-
-                    if (! $reset || $reset->expires_at->isPast()) {
-                        return ['state' => 'invalid'];
-                    }
-                    if ($reset->attempts >= (int) config('booking.reset_code_max_attempts')) {
-                        $reset->update(['used' => true]);
-
-                        return ['state' => 'locked'];
-                    }
-                    if (! password_verify($code, $reset->token_hash)) {
-                        $attempts = $reset->attempts + 1;
-                        $reset->update([
-                            'attempts' => $attempts,
-                            'used' => $attempts >= (int) config('booking.reset_code_max_attempts'),
-                        ]);
-
-                        return [
-                            'state' => $attempts >= (int) config('booking.reset_code_max_attempts')
-                                ? 'locked'
-                                : 'invalid',
-                        ];
-                    }
-
-                    $reset->update(['verified_at' => now()]);
-
-                    return ['state' => 'verified', 'id' => (int) $reset->id];
-                });
-
-                if ($result['state'] === 'verified') {
-                    $request->session()->put('password_reset_id', $result['id']);
-                    flash('success', 'Code verified. Choose a new password.');
-
-                    return redirect('/reset-password');
-                }
-
-                $errors['form'] = $result['state'] === 'locked'
-                    ? 'Too many attempts. Start again with a new reset code.'
-                    : 'Invalid or expired reset code.';
             }
         }
 
         return view('auth.reset-password', [
+            'token' => $token,
             'errors' => $errors,
-            'email' => $email,
-            'showPasswordForm' => $showPasswordForm,
+            'invalid' => $invalid,
             'pageTitle' => 'Reset Password',
             'minimalHeader' => true,
         ]);

@@ -4,10 +4,13 @@
         <div class="auth-logo">
             <img src="/assets/img/logo.svg" alt="{{ config('app.name') }} logo">
         </div>
+        <h1 class="auth-title">Choose a New Password</h1>
 
-        @if ($showPasswordForm)
-            <h1 class="auth-title">Choose a New Password</h1>
-            <p class="auth-sub">Use at least 8 characters. Your verified code can only be used once.</p>
+        @if ($invalid)
+            <p class="form-error mb-2" role="alert">This reset request is invalid or has expired.</p>
+            <a class="btn btn-primary btn-block" href="/forgot-password">Request a new code</a>
+        @else
+            <p class="auth-sub">Your code was verified. Use at least 8 characters. This reset request can only be used once.</p>
 
             @if (! empty($errors['form']))
                 <p class="form-error mb-2" role="alert">{{ $errors['form'] }}</p>
@@ -15,6 +18,8 @@
 
             <form class="form" method="post" action="/reset-password" novalidate>
                 @csrf
+                <input type="hidden" name="token" value="{{ $token }}">
+
                 <div class="field">
                     <label for="password">New Password</label>
                     <div class="password-field">
@@ -40,28 +45,6 @@
                 </div>
 
                 <button class="btn btn-primary btn-block" type="submit">Save New Password</button>
-            </form>
-        @else
-            <h1 class="auth-title">Verify Reset Code</h1>
-            <p class="auth-sub">Enter the email address that received your six-digit code.</p>
-
-            @if (! empty($errors['form']))
-                <p class="form-error mb-2" role="alert">{{ $errors['form'] }}</p>
-            @endif
-
-            <form class="form" method="post" action="/reset-password" novalidate>
-                @csrf
-                <div class="field">
-                    <label for="email">Email</label>
-                    <input type="email" id="email" name="email" value="{{ $email }}"
-                           autocomplete="email" required @if (isset($errors['email'])) aria-invalid="true" @endif>
-                </div>
-                <div class="field">
-                    <label for="code">Reset Code</label>
-                    <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]{6}"
-                           minlength="6" maxlength="6" autocomplete="one-time-code" required>
-                </div>
-                <button class="btn btn-primary btn-block" type="submit">Verify Code</button>
             </form>
         @endif
     </div>

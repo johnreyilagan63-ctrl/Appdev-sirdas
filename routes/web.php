@@ -26,6 +26,7 @@ Route::post('/signup', [AuthController::class, 'signup'])->name('signup.store');
 Route::get('/logout', [AuthController::class, 'logout'])->name('logout');
 Route::get('/forgot-password', [AuthController::class, 'showForgot'])->name('password.request');
 Route::post('/forgot-password', [AuthController::class, 'sendReset'])->name('password.email');
+Route::post('/forgot-password/verify', [AuthController::class, 'verifyResetCode'])->name('password.verify');
 Route::match(['get', 'post'], '/reset-password', [AuthController::class, 'showReset'])->name('password.reset');
 
 Route::get('/gallery', [GalleryController::class, 'index'])->name('gallery');
