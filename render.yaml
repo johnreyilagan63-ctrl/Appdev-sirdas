@@ -48,7 +48,7 @@ services:
       - key: MAIL_PASSWORD
         sync: false
       - key: MAIL_FROM_ADDRESS
-        value: hello@oliyettebook.test
+        value: gge086479@gmail.com
       - key: MAIL_FROM_NAME
         value: OliyetteBook
       - key: LOG_CHANNEL
