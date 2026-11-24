@@ -321,7 +321,9 @@ class AuthController extends Controller
                     return ['state' => 'locked'];
                 }
 
-                if (! password_verify($code, (string) $reset->token_hash)) {
+                // Older rows live in a char(64) column that pads stored hashes
+                // with spaces on Postgres, so compare against a trimmed hash.
+                if (! password_verify($code, trim((string) $reset->token_hash))) {
                     $attempts = (int) $reset->attempts + 1;
                     $reset->update([
                         'attempts' => $attempts,
