@@ -32,6 +32,7 @@ class PasswordResetCodeTest extends TestCase
             ->assertSee('Send a New Code');
 
         $code = $this->sentCode();
+        $wrongCode = $this->wrongCode($code);
 
         $this->get('/reset-password?token=' . $code)
             ->assertOk()
@@ -39,7 +40,7 @@ class PasswordResetCodeTest extends TestCase
 
         $response = $this->post('/forgot-password/verify', [
             'email' => $user->email,
-            'code' => '000000',
+            'code' => $wrongCode,
         ]);
 
         $response->assertRedirect('/forgot-password');
@@ -92,11 +93,12 @@ class PasswordResetCodeTest extends TestCase
 
         $this->post('/forgot-password', ['email' => $user->email])->assertRedirect('/forgot-password');
         $code = $this->sentCode();
+        $wrongCode = $this->wrongCode($code);
 
         for ($i = 0; $i < 5; $i++) {
             $this->post('/forgot-password/verify', [
                 'email' => $user->email,
-                'code' => '000000',
+                'code' => $wrongCode,
             ])->assertRedirect('/forgot-password');
         }
 
@@ -120,6 +122,11 @@ class PasswordResetCodeTest extends TestCase
             'role' => 'guest',
             'status' => 'active',
         ]);
+    }
+
+    private function wrongCode(string $code): string
+    {
+        return str_pad((string) (((int) $code + 1) % 1000000), 6, '0', STR_PAD_LEFT);
     }
 
     private function sentCode(): string
