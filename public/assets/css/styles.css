@@ -368,7 +368,7 @@ textarea {
   margin: 0 auto;
   padding: 40px clamp(20px, 3vw, 48px) 96px;
   flex: 1;
-  animation: pageIn 0.45s ease both;
+  animation: pageIn 0.45s ease;
 }
 
 @keyframes pageIn {
@@ -1977,7 +1977,10 @@ table.table tbody tr:hover {
   width: 100%;
   max-width: 520px;
   max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: var(--color-surface);
   border-radius: var(--radius-card);
   box-shadow: 0 24px 60px rgba(4, 14, 24, 0.38);

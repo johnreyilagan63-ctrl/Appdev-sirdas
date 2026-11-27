@@ -258,6 +258,7 @@
 
     <script type="application/json" id="unavailableDates">@json($unavailable)</script>
 
+    @push('modals')
     <div class="modal" id="bookingSummary" data-modal hidden>
         <div class="modal__backdrop" data-modal-close></div>
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
@@ -278,6 +279,7 @@
             </div>
         </div>
     </div>
+    @endpush
 @endif
 
 @include('partials.footer')
